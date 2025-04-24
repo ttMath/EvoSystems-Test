@@ -126,6 +126,27 @@ namespace EvoSystems.Service.EmployeeService
 
             return serviceResponse;
         }
+
+        public async Task<ServiceResponse<Employee>> GetEmployeeByRG(string RG)
+        {
+            ServiceResponse<Employee> serviceResponse = new ServiceResponse<Employee>();
+
+            var employee = await _context.Employee.FirstOrDefaultAsync(e => e.RG == RG);
+
+            if (employee is null)
+            {
+                serviceResponse.Success = false;
+                serviceResponse.Message = "Employee Not Found";
+                return serviceResponse;
+            }
+
+            serviceResponse.Success = true;
+            serviceResponse.Data = employee;
+            serviceResponse.Message = "You are logged in";
+
+            return serviceResponse;
+        }
+
         public async Task<ServiceResponse<Employee>> Inactive(int id)
         {
             return await _employeeRepository.Inactive(id);

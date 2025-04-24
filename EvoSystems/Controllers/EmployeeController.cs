@@ -1,9 +1,11 @@
 ﻿using AutoMapper;
+using EvoSystems.Authentication.Interfaces;
 using EvoSystems.Dto;
 using EvoSystems.Models;
 using EvoSystems.Repository;
 using EvoSystems.Service.DepartamentService;
 using EvoSystems.Service.EmployeeService;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Net.Http.Headers;
@@ -17,10 +19,12 @@ namespace EvoSystems.Controllers
      
         private readonly IEmployee _employeeService;
         private readonly IMapper _mapper;
-        public EmployeeController(IEmployee employeeService, IMapper mapper)
+        private readonly ITokenManager _tokenManager;
+        public EmployeeController(IEmployee employeeService, IMapper mapper, ITokenManager tokenManager)
         {
             _employeeService = employeeService;
             _mapper = mapper;
+            _tokenManager = tokenManager;
         }
 
         [HttpGet]
@@ -56,6 +60,7 @@ namespace EvoSystems.Controllers
             return Ok(serviceResponseDto);
         }
 
+        [Authorize]
         [HttpPut("{id}")]
         public async Task<ActionResult<ServiceResponse<EmployeeUpdateDto>>> Update(int id, EmployeeUpdateDto editedEmployeeDto)
         {
@@ -80,6 +85,51 @@ namespace EvoSystems.Controllers
             return Ok(employeeDtoResponse);
         }
 
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] LoginRequestDTO request)
+        {
+            if (string.IsNullOrWhiteSpace(request.RG)) return NotFound();
+
+            var serviceResponse = await _employeeService.GetEmployeeByRG(request.RG);
+            if (!serviceResponse.Success)
+            {
+                return BadRequest(serviceResponse);
+            }
+            var serviceResponseDto = _mapper.Map<ServiceResponse<EmployeeDetailDto>>(serviceResponse);
+
+            var token = _tokenManager.GenerateToken(serviceResponseDto.Data!);
+            var refreshToken = _tokenManager.GenerateRefreshToken(serviceResponseDto.Data!);
+
+            return Ok(new LoginResponseDTO(token, refreshToken));
+        }
+
+        [HttpPost("refresh-token")]
+        public async Task<IActionResult> RefreshToken([FromBody] RefrashTokenRequestDTO request)
+        {
+            if (string.IsNullOrWhiteSpace(request.RefreshToken))
+                return BadRequest();
+
+            var isValidTokenResult = await _tokenManager.ValidateTokenAsync(request.RefreshToken);
+
+            if (!isValidTokenResult.isValid)
+                return Unauthorized();
+
+            if (string.IsNullOrWhiteSpace(isValidTokenResult.RG))
+                return Unauthorized();
+
+            var serviceResponse = await _employeeService.GetEmployeeByRG(isValidTokenResult.RG);
+            if (!serviceResponse.Success)
+            {
+                return BadRequest(serviceResponse);
+            }
+            var serviceResponseDto = _mapper.Map<ServiceResponse<EmployeeDetailDto>>(serviceResponse);
+
+            var token = _tokenManager.GenerateToken(serviceResponseDto.Data!);
+            var refreshToken = _tokenManager.GenerateRefreshToken(serviceResponseDto.Data!);
+
+            return Ok(new LoginResponseDTO(token, refreshToken));
+        }
+
         [HttpDelete]
         public async Task<ActionResult<ServiceResponse<EmployeeDto>>> Delete(int id)
         {
@@ -96,6 +146,7 @@ namespace EvoSystems.Controllers
             return Ok(employeeDtoResponse);
         }
 
+        [Authorize]
         [HttpPost("uploadPicture")]
         public async Task<IActionResult> UploadPicture()
         {
@@ -109,7 +160,7 @@ namespace EvoSystems.Controllers
                 var folderName = Path.Combine("Resources", "Images");
                 var pathToSave = Path.Combine(Directory.GetCurrentDirectory(), folderName);
 
-                var fileName = ContentDispositionHeaderValue.Parse(file.ContentDisposition).FileName.Trim('"');
+                var fileName = ContentDispositionHeaderValue.Parse(file.ContentDisposition).FileName?.Trim('"');
                 var uniqueFileName = Guid.NewGuid().ToString() + "_" + fileName;
 
                 var fullPath = Path.Combine(pathToSave, uniqueFileName);
@@ -123,7 +174,7 @@ namespace EvoSystems.Controllers
 
                 return Ok(new { dbPath });
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 return StatusCode(500, "Internal server error");
             }
